@@ -6,31 +6,31 @@ import sys
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-# Добавляем корень проекта в PYTHONPATH, чтобы импортировать app.*
+# добавить корень проекта, чтобы импортировать app.*
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app.db import Base  # noqa: E402
-from app import models  # noqa: F401,E402  # важно импортнуть модели, чтобы metadata была заполнена
+from app import models  # noqa: F401,E402
 
-# Alembic config
 config = context.config
 
-def _normalized_db_url(raw: str | None) -> str | None:
-    """postgres:// -> postgresql:// ; добавляем драйвер psycopg (v3)."""
-    if not raw:
-        return raw
-    url = raw
+def _normalize(url: str) -> str:
+    # postgres:// -> postgresql:// ; добавить драйвер psycopg (v3)
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
     if url.startswith("postgresql://") and "+psycopg" not in url and "+psycopg2" not in url:
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
 
-_env_url = _normalized_db_url(os.getenv("DATABASE_URL"))
-_ini_url = _normalized_db_url(config.get_main_option("sqlalchemy.url"))
-final_url = _env_url or _ini_url
-if final_url:
-    config.set_main_option("sqlalchemy.url", final_url)
+# Берём URL ТОЛЬКО из переменной окружения. Если её нет — падаем с понятной ошибкой.
+env_url = os.getenv("DATABASE_URL")
+if not env_url:
+    raise RuntimeError(
+        "DATABASE_URL is not set. Set it in Render Environment. "
+        "Alembic on Render reads DB URL from ENV, not from alembic.ini."
+    )
+
+config.set_main_option("sqlalchemy.url", _normalize(env_url))
 
 target_metadata = Base.metadata
 
