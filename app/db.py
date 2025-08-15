@@ -8,10 +8,10 @@ SessionLocal = None
 Base = declarative_base()
 
 def _normalize_db_url(url: str) -> str:
-    # render/managed DB иногда дают postgres:// — нормализуем
+    # Render иногда даёт postgres:// — нормализуем
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
-    # если драйвер не указан — используем psycopg (v3)
+    # Если драйвер не указан — используем psycopg (v3)
     if url.startswith("postgresql://") and "+psycopg" not in url and "+psycopg2" not in url:
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
