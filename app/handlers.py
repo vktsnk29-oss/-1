@@ -1,82 +1,52 @@
+from __future__ import annotations
+
 from urllib.parse import quote
 
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Update,
-)
-from telegram.constants import ParseMode
-from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, ContextTypes, CommandHandler, CallbackQueryHandler
 
 from .config import load_settings
 
 settings = load_settings()
 
 
-def _deposit_keyboard(addr: str, comment: str) -> InlineKeyboardMarkup:
+def build_tonconnect_pay_kb(amount_ton: float, memo: str = "") -> InlineKeyboardMarkup:
+    base = str(settings.base_url).rstrip("/")
+    # Добавляем &to=..., чтобы явно передать адрес получателя
+    pay_url = f"{base}/pay?amount={amount_ton}&memo={quote(memo)}&to={settings.ton_address}"
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(f"Оплатить {amount_ton} TON (TON Connect)", url=pay_url)]]
+    )
+
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    ✅ HTTPS-deeplink для Tonkeeper (Telegram запрещает tonkeeper:// в кнопках)
-    ✅ Кнопка на Telegram Wallet
+    Простейший стартовый хендлер с кнопкой оплаты.
+    Подставь свою бизнес-логику расчёта суммы/комментария.
     """
-    tk_url = f"https://app.tonkeeper.com/transfer/{addr}?text={quote(comment)}"
-    tw_url = "https://t.me/wallet"
-
-    rows = [
-        [
-            InlineKeyboardButton("Tonkeeper", url=tk_url),
-            InlineKeyboardButton("Telegram Wallet", url=tw_url),
-        ],
-        # Можно добавить подсказки/проверку:
-        # [InlineKeyboardButton("Показать адрес", callback_data="show_addr")],
-        # [InlineKeyboardButton("Показать комментарий", callback_data=f"show_comment:{comment}")],
-    ]
-    return InlineKeyboardMarkup(rows)
-
-
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    comment = f"user-{user.id}" if user else "deposit"
-
+    amount_ton = 2.5
+    memo = "demo-order-123"
+    kb = build_tonconnect_pay_kb(amount_ton, memo)
     text = (
-        "💼 *Пополнение TON*\n\n"
-        "Отправьте любую сумму на адрес ниже. Для корректного зачисления сохраните комментарий.\n\n"
-        f"*Адрес:*\n`{settings.ton_address}`\n"
-        f"*Комментарий:*\n`{comment}`"
+        "👋 Привет! Это демо.\n\n"
+        f"Сумма к оплате: <b>{amount_ton} TON</b>\n"
+        f"Комментарий: <code>{memo}</code>\n\n"
+        "Нажми кнопку, чтобы оплатить через TON Connect."
     )
-    await update.effective_message.reply_text(
-        text,
-        reply_markup=_deposit_keyboard(settings.ton_address, comment),
-        parse_mode=ParseMode.MARKDOWN,
-        disable_web_page_preview=True,
-    )
+    await update.effective_chat.send_message(text, reply_markup=kb, parse_mode="HTML")
 
 
-async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+# Если у тебя есть существующие callback-кнопки — добавь сюда нужные обработчики.
+# Оставим пример для будущих расширений:
+async def on_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    if not q:
-        return
-    data = q.data or ""
-    # здесь можно обработать свои callback_data (show_addr / show_comment и пр.)
-    if data.startswith("show_addr"):
-        await q.answer()
-        await q.edit_message_text(
-            f"Адрес для пополнения:\n`{settings.ton_address}`",
-            parse_mode=ParseMode.MARKDOWN,
-            disable_web_page_preview=True,
-        )
-        return
-
-    await q.answer("Ок")
+    await q.answer("Окей!")
 
 
-def register(app: Application) -> None:
+def register(app: Application):
     """
-    Регистрация хендлеров. В web.py вызывается как register_handlers(application)
+    Регистрируем хендлеры в PTB Application.
+    Если у тебя есть свои — добавляй их тут.
     """
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CallbackQueryHandler(on_cb))
