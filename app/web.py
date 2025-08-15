@@ -22,7 +22,7 @@ settings = load_settings()
 
 
 def _secret(val):
-    """Возвращает str из SecretStr/None/str без утечек."""
+    """Вернёт str из SecretStr/None/str."""
     if val is None:
         return None
     get = getattr(val, "get_secret_value", None)
@@ -30,9 +30,10 @@ def _secret(val):
 
 
 # ===== Telegram Bot (python-telegram-bot v22) =====
-_bot_token = _secret(settings.bot_token)  # <-- ВАЖНО: превратили SecretStr в str
+_bot_token = _secret(settings.bot_token)  # SecretStr -> str
 tg_app: Application = Application.builder().token(_bot_token).build()
 register_handlers(tg_app)
+
 
 # ======= Webhook endpoint =======
 @app.post(getattr(settings, "webhook_path", "/webhook/telegram"))
@@ -54,7 +55,11 @@ async def telegram_webhook(
 # ======= LIFECYCLE =======
 @app.on_event("startup")
 async def on_startup():
-    # Устанавливаем Telegram Webhook
+    # ОБЯЗАТЕЛЬНО: инициализируем и запускаем Application
+    await tg_app.initialize()
+    await tg_app.start()
+
+    # Устанавливаем Telegram Webhook (мы используем свой FastAPI-сервер)
     base = str(settings.base_url).rstrip("/")
     webhook_url = base + getattr(settings, "webhook_path", "/webhook/telegram")
     await tg_app.bot.set_webhook(
@@ -70,11 +75,17 @@ async def on_startup():
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    # Останавливаем фонового наблюдателя
     task: asyncio.Task | None = getattr(app.state, "_ton_task", None)
     if task and not task.done():
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+    # Корректно гасим Application
+    with contextlib.suppress(Exception):
+        await tg_app.stop()
+        await tg_app.shutdown()
 
 
 async def _run_watcher_safe():
@@ -125,7 +136,6 @@ def pay(amount: float, memo: str = "", to: Optional[str] = None):
     to_addr = to or settings.ton_address
     base = str(settings.base_url).rstrip("/")
 
-    # Встраиваемый HTML — открывает модалку TON Connect и отправляет транзакцию
     html = f"""<!doctype html>
 <html lang="ru">
 <head>
@@ -168,7 +178,6 @@ def pay(amount: float, memo: str = "", to: Optional[str] = None):
     const amountTON = {amount};
     const memo = {memo!r};
 
-    // TON -> nanoTON
     const amountNano = BigInt(Math.round(amountTON * 1e9)).toString();
 
     const statusEl = document.getElementById("status");
@@ -188,7 +197,7 @@ def pay(amount: float, memo: str = "", to: Optional[str] = None):
         messages: [{{
           address: toAddr,
           amount: amountNano
-          // payload: addCommentPayload(memo) // включи, если хочешь писать комментарий в блокчейн
+          // payload: addCommentPayload(memo) // включи, если нужен комментарий в цепочку
         }}]
       }};
     }}
