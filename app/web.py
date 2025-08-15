@@ -7,8 +7,10 @@ from fastapi.responses import JSONResponse
 from telegram import Update
 from telegram.ext import ApplicationBuilder
 
+from sqlalchemy import text
+
 from .config import load_settings
-from .db import init_db
+from .db import init_db, engine
 from .handlers import register as register_handlers
 
 # Загружаем конфиг и инициализируем БД
@@ -29,16 +31,51 @@ except Exception:
     run_watcher = None  # type: ignore
 
 
+def ensure_schema() -> None:
+    """
+    Создаём отсутствующие элементы схемы без Alembic.
+    - Добавляем state.updated_at, если его нет (Postgres: IF NOT EXISTS).
+    """
+    try:
+        with engine.begin() as conn:
+            # Если таблица state ещё не создана миграциями, создадим её «по-быстрому».
+            conn.exec_driver_sql("""
+                CREATE TABLE IF NOT EXISTS state (
+                    key VARCHAR(64) PRIMARY KEY,
+                    value VARCHAR(256) NOT NULL
+                )
+            """)
+            # Добавляем колонку updated_at, если её нет.
+            conn.exec_driver_sql("""
+                ALTER TABLE state
+                ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ
+            """)
+            # Можно оставить NULLable. При желании: проставить значения для существующих строк.
+            conn.exec_driver_sql("""
+                UPDATE state
+                SET updated_at = NOW()
+                WHERE updated_at IS NULL
+            """)
+    except Exception as e:
+        # Если что-то пошло не так — пусть приложение всё равно стартует,
+        # но мы увидим причину в логах.
+        print("ensure_schema_error", e)
+
+
 @app.on_event("startup")
 async def on_startup():
+    # 0) Чиним схему БД (стволбец updated_at), прежде чем что-то запрашивать
+    ensure_schema()
+
+    # 1) Telegram App
     await tg_app.initialize()
     await tg_app.start()
 
-    # Устанавливаем вебхук с секретом из конфига
-    url = f"{settings.base_url}{settings.webhook_path}"
+    # 2) Ставим корректный вебхук (без двойного слэша)
+    url = settings.base_url.rstrip("/") + settings.webhook_path
     await tg_app.bot.set_webhook(url, secret_token=settings.telegram_webhook_secret)
 
-    # Стартуем фонового вочера TON (если есть)
+    # 3) Запускаем фонового вочера TON (если есть)
     global _watcher_task
     if run_watcher:
         _watcher_task = asyncio.create_task(run_watcher())
