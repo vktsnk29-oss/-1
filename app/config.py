@@ -10,11 +10,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # читаем ENV и .env; регистр чувствителен (как в Render)
+    # читаем ENV и .env; игнорим лишние поля
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",
     )
 
     # Telegram / bot
@@ -40,29 +41,30 @@ class Settings(BaseSettings):
     deposit_tag_prefix: str = Field(default="P4V", validation_alias=AliasChoices("DEPOSIT_TAG_PREFIX", "deposit_tag_prefix"))
     default_deposit_amount: str = Field(default="0", validation_alias=AliasChoices("DEFAULT_DEPOSIT_AMOUNT", "default_deposit_amount"))
 
-    class Config:
-        extra = "ignore"
-
 
 def load_settings() -> Settings:
-    # Разрешаем подтягивать .env
+    # Разрешаем подтягивать .env локально
     try:
         from dotenv import load_dotenv
         load_dotenv()
     except Exception:
         pass
 
-    # Фолбэк на Render: если BASE_URL не задан — возьмём RENDER_EXTERNAL_URL
+    # Фолбэк BASE_URL из Render
     if not os.getenv("BASE_URL") and os.getenv("RENDER_EXTERNAL_URL"):
         os.environ["BASE_URL"] = os.getenv("RENDER_EXTERNAL_URL")
 
-    # Нормализуем ADMIN_IDS (пробелы, точки с запятыми)
+    # Нормализуем ADMIN_IDS в JSON-массив, чтобы Pydantic однозначно разобрал
     admins = os.getenv("ADMIN_IDS", "")
-    if admins:
-        os.environ["ADMIN_IDS"] = ",".join(a.strip() for a in admins.replace(";", ",").split(",") if a.strip())
+    nums = [a.strip() for a in admins.replace(";", ",").split(",") if a.strip().isdigit()]
+    if nums:
+        os.environ["ADMIN_IDS"] = "[" + ",".join(nums) + "]"
+    else:
+        # если пусто/мусор — убираем переменную, чтобы сработал default_factory=list
+        if "ADMIN_IDS" in os.environ:
+            del os.environ["ADMIN_IDS"]
 
     # Дефолт порта, если не задан
-    if not os.getenv("PORT"):
-        os.environ["PORT"] = "8080"
+    os.environ.setdefault("PORT", "8080")
 
     return Settings()
