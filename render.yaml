@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: tg-bot-ton-webhook-prod
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.web:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: BOT_TOKEN
+        sync: false
+      - key: BASE_URL
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: TON_API_BASE
+        value: https://toncenter.com/api/v2
+      - key: TON_API_KEY
+        sync: false
+      - key: TON_ADDRESS
+        sync: false
+      - key: TON_POLL_INTERVAL
+        value: 5
+      - key: TON_MIN_DEPOSIT
+        value: 0.1
+      - key: TON_REQUIRE_DEPTH
+        value: 1
+      - key: DEPOSIT_MODE
+        value: comment
+      - key: DEPOSIT_TAG_PREFIX
+        value: P4V
+      - key: DEFAULT_DEPOSIT_AMOUNT
+        value: 0
