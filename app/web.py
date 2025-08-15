@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 from typing import Optional
 
 import structlog
@@ -19,8 +20,18 @@ logger = structlog.get_logger()
 app = FastAPI()
 settings = load_settings()
 
+
+def _secret(val):
+    """Возвращает str из SecretStr/None/str без утечек."""
+    if val is None:
+        return None
+    get = getattr(val, "get_secret_value", None)
+    return get() if callable(get) else val
+
+
 # ===== Telegram Bot (python-telegram-bot v22) =====
-tg_app: Application = Application.builder().token(settings.bot_token).build()
+_bot_token = _secret(settings.bot_token)  # <-- ВАЖНО: превратили SecretStr в str
+tg_app: Application = Application.builder().token(_bot_token).build()
 register_handlers(tg_app)
 
 # ======= Webhook endpoint =======
@@ -30,7 +41,7 @@ async def telegram_webhook(
     x_telegram_bot_api_secret_token: Optional[str] = Header(None),
 ):
     # Проверка секрета вебхука
-    expected = getattr(settings, "webhook_secret", None)
+    expected = _secret(getattr(settings, "webhook_secret", None))
     if expected and x_telegram_bot_api_secret_token != expected:
         raise HTTPException(status_code=403, detail="invalid webhook secret")
 
@@ -48,7 +59,7 @@ async def on_startup():
     webhook_url = base + getattr(settings, "webhook_path", "/webhook/telegram")
     await tg_app.bot.set_webhook(
         url=webhook_url,
-        secret_token=getattr(settings, "webhook_secret", None),
+        secret_token=_secret(getattr(settings, "webhook_secret", None)),
         drop_pending_updates=True,
     )
     logger.info("webhook_set", url=webhook_url)
