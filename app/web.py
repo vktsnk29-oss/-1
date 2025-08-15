@@ -6,16 +6,15 @@ from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
 from telegram import Update
 from telegram.ext import ApplicationBuilder
-
-from sqlalchemy import text
+from sqlalchemy import text  # на будущее, если понадобится
 
 from .config import load_settings
-from .db import init_db, engine
+from . import db  # ВАЖНО: импортируем модуль, а не переменные!
 from .handlers import register as register_handlers
 
 # Загружаем конфиг и инициализируем БД
 settings = load_settings()
-init_db(settings.database_url)
+db.init_db(settings.database_url)
 
 app = FastAPI(title="Telegram Bot Webhook")
 
@@ -34,37 +33,36 @@ except Exception:
 def ensure_schema() -> None:
     """
     Создаём отсутствующие элементы схемы без Alembic.
-    - Добавляем state.updated_at, если его нет (Postgres: IF NOT EXISTS).
+    - Таблица state (если нет)
+    - Колонка state.updated_at (если нет)
     """
     try:
-        with engine.begin() as conn:
-            # Если таблица state ещё не создана миграциями, создадим её «по-быстрому».
+        if db.engine is None:
+            # если по какой-то причине не инициализировалось — повторим
+            db.init_db(settings.database_url)
+        with db.engine.begin() as conn:
             conn.exec_driver_sql("""
                 CREATE TABLE IF NOT EXISTS state (
                     key VARCHAR(64) PRIMARY KEY,
                     value VARCHAR(256) NOT NULL
                 )
             """)
-            # Добавляем колонку updated_at, если её нет.
             conn.exec_driver_sql("""
                 ALTER TABLE state
                 ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ
             """)
-            # Можно оставить NULLable. При желании: проставить значения для существующих строк.
             conn.exec_driver_sql("""
                 UPDATE state
                 SET updated_at = NOW()
                 WHERE updated_at IS NULL
             """)
     except Exception as e:
-        # Если что-то пошло не так — пусть приложение всё равно стартует,
-        # но мы увидим причину в логах.
         print("ensure_schema_error", e)
 
 
 @app.on_event("startup")
 async def on_startup():
-    # 0) Чиним схему БД (стволбец updated_at), прежде чем что-то запрашивать
+    # 0) Чиним схему БД до любых SELECT
     ensure_schema()
 
     # 1) Telegram App
@@ -72,7 +70,7 @@ async def on_startup():
     await tg_app.start()
 
     # 2) Ставим корректный вебхук (без двойного слэша)
-    url = settings.base_url.rstrip("/") + settings.webhook_path
+    url = str(settings.base_url).rstrip("/") + settings.webhook_path
     await tg_app.bot.set_webhook(url, secret_token=settings.telegram_webhook_secret)
 
     # 3) Запускаем фонового вочера TON (если есть)
